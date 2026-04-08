@@ -1,2 +1,6 @@
 [toolchain]
+# Pinned to 1.92.0 because:
+#   - wgpu 28.0.0 requires rustc >= 1.92
+#   - iced 0.14.0 requires rustc >= 1.88
+# Do not lower below 1.92 — wgpu's HAL layer uses stabilized APIs from that release.
 channel = "1.92.0"

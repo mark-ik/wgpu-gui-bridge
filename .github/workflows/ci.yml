@@ -8,6 +8,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  # Servo pulls aws-lc-rs which requires nasm on Windows; skip ASM on CI
+  AWS_LC_SYS_NO_ASM: "1"
 
 jobs:
   check:
@@ -16,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust stable
+      - name: Install Rust (pinned via rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry
@@ -26,27 +28,57 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml', 'rust-toolchain.toml') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      # Check the core library without the surfman feature (no heavy deps)
+      # --- Core library ---
+
       - name: cargo check (no-default-features)
         run: cargo check -p wgpu-native-texture-interop --no-default-features
 
-      # Check with surfman enabled (pulls in gleam/euclid/surfman)
       - name: cargo check (all features)
         run: cargo check -p wgpu-native-texture-interop --all-features
 
-      # Run the pure-logic unit tests (no GPU required)
       - name: cargo test
         run: cargo test -p wgpu-native-texture-interop
 
-      # Check the raw-GL demo compiles (no Servo dep, no hardware needed)
-      - name: cargo check demo-raw-gl
-        run: cargo check -p demo-raw-gl
-
-      # Verify docs build cleanly
       - name: cargo doc
         run: cargo doc -p wgpu-native-texture-interop --no-deps --no-default-features
         env:
           RUSTDOCFLAGS: -D warnings
+
+      # --- Raw GL demo (no Servo dependency, no native build deps) ---
+
+      - name: cargo check demo-raw-gl
+        run: cargo check -p demo-raw-gl
+
+      # --- Servo demos ---
+      #
+      # These require native build deps that mozangle (ANGLE) needs on Linux:
+      #   clang, cmake, libssl-dev, pkg-config
+      # They run with continue-on-error so a build-env gap doesn't block CI,
+      # but failures are still visible in the Actions summary.
+
+      - name: Install Servo build deps
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            clang cmake libssl-dev pkg-config \
+            libdbus-1-dev libfreetype6-dev libfontconfig1-dev \
+            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - name: cargo check demo-servo-winit
+        run: cargo check -p demo-servo-winit
+        continue-on-error: true
+
+      - name: cargo check demo-servo-xilem
+        run: cargo check -p demo-servo-xilem
+        continue-on-error: true
+
+      - name: cargo check demo-servo-iced
+        run: cargo check -p demo-servo-iced
+        continue-on-error: true
+
+      - name: cargo check demo-servo-gpui
+        run: cargo check -p demo-servo-gpui
+        continue-on-error: true

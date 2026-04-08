@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>servo-wgpu-interop static fixture</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #fbf6ef;
+      --ink: #1f1f1f;
+      --accent: #005f73;
+      --accent-2: #ee9b00;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 2rem;
+      font-family: "Palatino Linotype", Palatino, serif;
+      color: var(--ink);
+      background:
+        linear-gradient(160deg, rgba(238, 155, 0, 0.12), transparent 30%),
+        linear-gradient(320deg, rgba(0, 95, 115, 0.12), transparent 34%),
+        var(--paper);
+    }
+
+    article {
+      width: min(42rem, 100%);
+      padding: 2rem;
+      border: 1px solid rgba(31, 31, 31, 0.12);
+      border-radius: 1.25rem;
+      background: rgba(255, 255, 255, 0.8);
+      box-shadow: 0 18px 50px rgba(31, 31, 31, 0.08);
+    }
+
+    h1 {
+      margin-top: 0;
+      color: var(--accent);
+      font-size: clamp(2rem, 4vw, 3rem);
+    }
+
+    .swatches {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 1.5rem;
+    }
+
+    .swatch {
+      flex: 1;
+      height: 5rem;
+      border-radius: 1rem;
+    }
+
+    .swatch.one { background: #005f73; }
+    .swatch.two { background: #0a9396; }
+    .swatch.three { background: #ee9b00; }
+    .swatch.four { background: #ca6702; }
+  </style>
+</head>
+<body>
+  <article>
+    <h1>Static texture sanity check</h1>
+    <p>
+      Use this page when you want to verify that the imported frame is upright, color-correct, and
+      stable without any animation noise.
+    </p>
+    <div class="swatches">
+      <div class="swatch one"></div>
+      <div class="swatch two"></div>
+      <div class="swatch three"></div>
+      <div class="swatch four"></div>
+    </div>
+  </article>
+</body>
+</html>
