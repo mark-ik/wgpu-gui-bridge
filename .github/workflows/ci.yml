@@ -12,8 +12,9 @@ env:
   AWS_LC_SYS_NO_ASM: "1"
 
 jobs:
-  check:
-    name: Check and test
+  # ── Linux ──────────────────────────────────────────────────────────────────
+  check-linux:
+    name: Check and test (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,13 +60,143 @@ jobs:
       # They run with continue-on-error so a build-env gap doesn't block CI,
       # but failures are still visible in the Actions summary.
 
-      - name: Install Servo build deps
+      - name: Install Servo build deps (Linux)
         run: |
           sudo apt-get update -q
           sudo apt-get install -y --no-install-recommends \
             clang cmake libssl-dev pkg-config \
             libdbus-1-dev libfreetype6-dev libfontconfig1-dev \
             libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - name: cargo check demo-servo-winit
+        run: cargo check -p demo-servo-winit
+        continue-on-error: true
+
+      - name: cargo check demo-servo-xilem
+        run: cargo check -p demo-servo-xilem
+        continue-on-error: true
+
+      - name: cargo check demo-servo-iced
+        run: cargo check -p demo-servo-iced
+        continue-on-error: true
+
+      - name: cargo check demo-servo-gpui
+        run: cargo check -p demo-servo-gpui
+        continue-on-error: true
+
+  # ── macOS ──────────────────────────────────────────────────────────────────
+  check-macos:
+    name: Check (macOS / Metal)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (pinned via rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # --- Core library (Metal + IOSurface path) ---
+
+      - name: cargo check (no-default-features)
+        run: cargo check -p wgpu-native-texture-interop --no-default-features
+
+      - name: cargo check (all features)
+        run: cargo check -p wgpu-native-texture-interop --all-features
+
+      - name: cargo test
+        run: cargo test -p wgpu-native-texture-interop
+
+      - name: cargo doc
+        run: cargo doc -p wgpu-native-texture-interop --no-deps --no-default-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      # --- Servo demos ---
+      #
+      # Servo on macOS requires cmake and pkg-config (via Homebrew).
+      # continue-on-error so a missing dep doesn't block the core-library check.
+
+      - name: Install Servo build deps (macOS)
+        run: brew install cmake pkg-config
+
+      - name: cargo check demo-servo-winit
+        run: cargo check -p demo-servo-winit
+        continue-on-error: true
+
+      - name: cargo check demo-servo-xilem
+        run: cargo check -p demo-servo-xilem
+        continue-on-error: true
+
+      - name: cargo check demo-servo-iced
+        run: cargo check -p demo-servo-iced
+        continue-on-error: true
+
+      - name: cargo check demo-servo-gpui
+        run: cargo check -p demo-servo-gpui
+        continue-on-error: true
+
+  # ── Windows ────────────────────────────────────────────────────────────────
+  check-windows:
+    name: Check (Windows / Vulkan + D3D)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (pinned via rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # NASM is needed by aws-lc-sys on Windows even with NO_ASM=1 for some
+      # codepaths; install it defensively.
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1
+
+      # --- Core library (Windows Vulkan + D3D11/D3D12 paths) ---
+
+      - name: cargo check (no-default-features)
+        run: cargo check -p wgpu-native-texture-interop --no-default-features
+
+      - name: cargo check (all features)
+        run: cargo check -p wgpu-native-texture-interop --all-features
+
+      - name: cargo test
+        run: cargo test -p wgpu-native-texture-interop
+
+      - name: cargo doc
+        run: cargo doc -p wgpu-native-texture-interop --no-deps --no-default-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      # --- Raw GL demo ---
+
+      - name: cargo check demo-raw-gl
+        run: cargo check -p demo-raw-gl
+
+      # --- Servo demos ---
+      #
+      # Servo/mozangle on Windows requires clang and cmake.
+      # LLVM is already present on windows-latest runners.
+
+      - name: Install cmake
+        uses: lukka/get-cmake@latest
 
       - name: cargo check demo-servo-winit
         run: cargo check -p demo-servo-winit
