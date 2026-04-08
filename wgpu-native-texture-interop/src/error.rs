@@ -61,4 +61,8 @@ pub enum InteropError {
     /// A D3D12 or DXGI API call failed during import.
     #[error("D3D12 interop failed: {0}")]
     Dx12(String),
+
+    /// An ANGLE EGL API call failed during D3D11 share-handle import.
+    #[error("ANGLE EGL interop failed: {0}")]
+    Angle(String),
 }

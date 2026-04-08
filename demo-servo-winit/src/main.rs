@@ -1,9 +1,10 @@
 //! Minimal winit + wgpu demo embedding Servo as a web renderer.
 //!
-//! Demonstrates both GPU texture import and CPU readback paths. The GPU path
-//! (GL→wgpu via Vulkan external memory or DX12 shared textures) is preferred;
-//! if the GL driver lacks `GL_EXT_memory_object_win32`/`GL_EXT_memory_object_fd`,
-//! the demo falls back to CPU readback (`read_full_frame()` → `write_texture()`).
+//! Demonstrates both GPU texture import and CPU readback paths. On Windows with
+//! Servo/ANGLE, the zero-copy path uses `eglQuerySurfacePointerANGLE` to obtain
+//! the D3D11 shared handle and imports it via `VK_KHR_external_memory_win32`.
+//! Falls back to `GL_EXT_memory_object_win32` (non-ANGLE Vulkan GL), then to
+//! CPU readback (`read_full_frame()` → `write_texture()`) if no GPU path works.
 //!
 //! Mouse, scroll, and keyboard events are forwarded directly to Servo so
 //! pages are fully interactive (links, scrolling, text input).
@@ -316,7 +317,13 @@ struct Renderer {
 
 impl Renderer {
     async fn new(window: Arc<Window>) -> Result<Self, String> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        // On Windows, prefer Vulkan so the ANGLE D3D11 share handle import path works.
+        // Allow DX12 as a fallback for systems without a Vulkan driver.
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            #[cfg(target_os = "windows")]
+            backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12,
+            ..Default::default()
+        });
         let surface = instance
             .create_surface(window.clone())
             .map_err(|error| error.to_string())?;
@@ -330,10 +337,19 @@ impl Renderer {
             .await
             .map_err(|error| error.to_string())?;
 
+        // Request VULKAN_EXTERNAL_MEMORY_WIN32 if the adapter supports it.
+        // This is required for the ANGLE D3D11 share handle zero-copy import path.
+        // If unsupported, we fall back to the CPU readback path transparently.
+        #[cfg(target_os = "windows")]
+        let extra_features = adapter.features()
+            & wgpu::Features::VULKAN_EXTERNAL_MEMORY_WIN32;
+        #[cfg(not(target_os = "windows"))]
+        let extra_features = wgpu::Features::empty();
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("demo-servo-winit-device"),
-                required_features: wgpu::Features::empty(),
+                required_features: extra_features,
                 required_limits: wgpu::Limits::default().using_resolution(adapter.limits()),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: wgpu::MemoryHints::Performance,

@@ -16,6 +16,9 @@ pub mod windows;
 #[cfg(target_os = "windows")]
 pub mod dx12;
 
+#[cfg(target_os = "windows")]
+pub mod angle_d3d11;
+
 /// BGRA-to-RGBA and Y-flip normalization pass for imported textures.
 pub mod texture_normalizer;
 

@@ -14,6 +14,33 @@ pub(super) fn import_current_frame(
     let device = &source.context.device.borrow();
     let mut context = source.context.context.borrow_mut();
 
+    // Make the context current WITH the surface still bound so that
+    // eglGetCurrentSurface(EGL_DRAW) returns the ANGLE pbuffer.
+    // Servo may have released the context after rendering; this restores it.
+    device
+        .make_context_current(&mut context)
+        .map_err(|err| InteropError::Surfman(format!("{err:?}")))?;
+
+    // ── Fast path: ANGLE D3D11 share handle (zero-copy, no GL extension needed) ──
+    // The context is now current with the pbuffer as the draw surface, so
+    // eglQuerySurfacePointerANGLE can retrieve the backing D3D11 handle.
+    match crate::raw_gl::angle_d3d11::import_angle_d3d11_frame(source.size, host) {
+        Ok(texture) => {
+            return Ok(ImportedTexture {
+                texture,
+                format: wgpu::TextureFormat::Bgra8Unorm,
+                size: frame.size(),
+                origin: TextureOrigin::TopLeft,
+                generation: source.generation,
+                consumer_sync: SyncMechanism::ImplicitGlFlush,
+            });
+        }
+        Err(_) => {
+            // Not an ANGLE context, or Vulkan backend unavailable; try GL extension path.
+        }
+    }
+
+    // ── Slow path: GL_EXT_memory_object_win32 (non-ANGLE Vulkan GL) ──────────────
     let surface = device
         .unbind_surface_from_context(&mut context)
         .map_err(|err| InteropError::Surfman(format!("{err:?}")))?
