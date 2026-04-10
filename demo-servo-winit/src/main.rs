@@ -29,7 +29,7 @@ use servo::{
 };
 use servo_wgpu_interop_adapter::ServoWgpuInteropAdapter;
 use url::Url;
-use wgpu::SurfaceError;
+use wgpu::CurrentSurfaceTexture;
 use wgpu_native_texture_interop::{HostWgpuContext, InteropBackend};
 use winit::{
     application::ApplicationHandler,
@@ -276,10 +276,7 @@ impl AppState {
         if !self.gpu_import_failed {
             match self.interop.import_current_frame_default() {
                 Ok(imported) => {
-                    return self
-                        .renderer
-                        .render_texture(&imported.texture)
-                        .map_err(|e| format!("surface render error: {e}"));
+                    return self.renderer.render_texture(&imported.texture);
                 }
                 Err(e) => {
                     eprintln!("[demo] GPU import unavailable, falling back to CPU readback: {e}");
@@ -292,9 +289,7 @@ impl AppState {
         if let Some(image) = self.interop.rendering_context_handle().read_full_frame() {
             self.renderer.upload_frame(&image);
         }
-        self.renderer
-            .render_cached()
-            .map_err(|e| format!("surface render error: {e}"))
+        self.renderer.render_cached()
     }
 }
 
@@ -319,10 +314,15 @@ impl Renderer {
     async fn new(window: Arc<Window>) -> Result<Self, String> {
         // On Windows, prefer Vulkan so the ANGLE D3D11 share handle import path works.
         // Allow DX12 as a fallback for systems without a Vulkan driver.
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             #[cfg(target_os = "windows")]
             backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12,
-            ..Default::default()
+            #[cfg(not(target_os = "windows"))]
+            backends: wgpu::Backends::all(),
+            flags: wgpu::InstanceFlags::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            backend_options: wgpu::BackendOptions::default(),
+            display: None,
         });
         let surface = instance
             .create_surface(window.clone())
@@ -350,7 +350,11 @@ impl Renderer {
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("demo-servo-winit-device"),
                 required_features: extra_features,
-                required_limits: wgpu::Limits::default().using_resolution(adapter.limits()),
+                required_limits: wgpu::Limits {
+                    // WebRender's composite shader uses up to @location(17).
+                    max_inter_stage_shader_variables: 28,
+                    ..wgpu::Limits::default()
+                }.using_resolution(adapter.limits()),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: wgpu::MemoryHints::Performance,
                 trace: wgpu::Trace::Off,
@@ -473,7 +477,7 @@ impl Renderer {
     }
 
     /// Render a GPU-imported wgpu texture (zero-copy path).
-    fn render_texture(&self, texture: &wgpu::Texture) -> Result<(), SurfaceError> {
+    fn render_texture(&self, texture: &wgpu::Texture) -> Result<(), String> {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gpu-frame-bind-group"),
@@ -558,12 +562,15 @@ impl Renderer {
     }
 
     /// Render the cached CPU-uploaded frame texture.
-    fn render_cached(&self) -> Result<(), SurfaceError> {
+    fn render_cached(&self) -> Result<(), String> {
         self.draw_fullscreen_quad(self.frame_bind_group.as_ref())
     }
 
-    fn draw_fullscreen_quad(&self, bind_group: Option<&wgpu::BindGroup>) -> Result<(), SurfaceError> {
-        let frame = self.surface.get_current_texture()?;
+    fn draw_fullscreen_quad(&self, bind_group: Option<&wgpu::BindGroup>) -> Result<(), String> {
+        let frame = match self.surface.get_current_texture() {
+            CurrentSurfaceTexture::Success(tex) | CurrentSurfaceTexture::Suboptimal(tex) => tex,
+            other => return Err(format!("surface texture unavailable: {other:?}")),
+        };
         let surface_view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());

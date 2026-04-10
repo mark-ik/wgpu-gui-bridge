@@ -271,19 +271,22 @@ pub struct Dx12SharedTexture {
 /// A frame produced by a [`FrameProducer`], ready to be imported by a
 /// [`TextureImporter`].
 ///
-/// The `GlFramebufferSource` variant is the only one with a complete import
-/// implementation. The other variants are defined for API stability but will
-/// return [`InteropError::Unsupported`] until their import paths are
-/// implemented.
+/// A frame produced by a [`FrameProducer`], ready to be imported by a
+/// [`TextureImporter`].
+///
+/// `GlFramebufferSource`, `MetalTextureRef`, and `Dx12SharedTexture` have
+/// complete import implementations. `VulkanExternalImage` is defined for API
+/// stability but its import path is not yet implemented.
 #[non_exhaustive]
 pub enum NativeFrame {
     /// A GL framebuffer — the primary, fully-implemented path.
     GlFramebufferSource(GlFramebufferSource),
-    /// A Vulkan external image. Returns [`UnsupportedReason::NativeImportNotYetImplemented`].
+    /// A Vulkan external image. Not yet implemented — returns
+    /// [`UnsupportedReason::NativeImportNotYetImplemented`].
     VulkanExternalImage(VulkanExternalImage),
-    /// A Metal texture reference. Returns [`UnsupportedReason::NativeImportNotYetImplemented`].
+    /// A Metal texture reference. Fully implemented via IOSurface interop.
     MetalTextureRef(MetalTextureRef),
-    /// A D3D12 shared texture. Returns [`UnsupportedReason::PlatformNotImplemented`].
+    /// A D3D12 shared texture. Fully implemented via shared handle interop.
     Dx12SharedTexture(Dx12SharedTexture),
 }
 
@@ -418,7 +421,9 @@ impl CapabilityMatrix {
         };
 
         let vulkan_external_image = match host_backend {
-            InteropBackend::Vulkan => CapabilityStatus::Supported,
+            InteropBackend::Vulkan => {
+                CapabilityStatus::Unsupported(UnsupportedReason::NativeImportNotYetImplemented)
+            }
             InteropBackend::Metal | InteropBackend::Dx12 => {
                 CapabilityStatus::Unsupported(UnsupportedReason::HostBackendMismatch)
             }
@@ -685,7 +690,10 @@ mod tests {
             CapabilityStatus::Unsupported(UnsupportedReason::HostBackendUnavailable)
         );
 
-        assert_eq!(vulkan.vulkan_external_image, CapabilityStatus::Supported);
+        assert_eq!(
+            vulkan.vulkan_external_image,
+            CapabilityStatus::Unsupported(UnsupportedReason::NativeImportNotYetImplemented)
+        );
         assert_eq!(
             metal.vulkan_external_image,
             CapabilityStatus::Unsupported(UnsupportedReason::HostBackendMismatch)
