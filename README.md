@@ -67,7 +67,7 @@ pick a branch without digging through commit history.
 | `main` | Recommended default for embedders | `v0.1.x` LTS |
 | `latest-release` | Tracks the newest non-LTS Servo release once one exists after `v0.1.0` | post-LTS release line |
 | `experimental` | Integration work against upstream Servo head | upstream `main` |
-| `servo-wgpu` | Fork-specific work for the WebRender wgpu backend and related experiments | custom forks |
+| `servo-webgl-interop` | Fork-specific work for the hybrid WebRender wgpu plus WebGL interop path | custom forks |
 
 As of April 18, 2026, Servo `v0.1.0` is both the current LTS release and the
 latest release, so `main` is the branch most users should follow. The older

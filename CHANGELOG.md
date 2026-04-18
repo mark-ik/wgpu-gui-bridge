@@ -7,7 +7,7 @@ All notable changes to this project will be documented here.
 ### Added
 
 - `README.md`: documented the branch policy for `main`, `latest-release`,
-  `experimental`, and `servo-wgpu`, and clarified that `main` targets Servo
+  `experimental`, and `servo-webgl-interop`, and clarified that `main` targets Servo
   `v0.1.x` LTS
 - `demo-servo-xilem`: Servo embedded in Xilem 0.4 with URL bar, CPU readback,
   and full input forwarding (mouse, scroll, keyboard)
