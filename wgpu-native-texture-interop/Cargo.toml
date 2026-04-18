@@ -16,9 +16,9 @@ wgpu = { version = "29.0.1", features = ["metal"] }
 wgpu-hal = "29.0.1"
 euclid = { version = "0.22.11", optional = true }
 gleam = { version = "0.15.1", optional = true }
-glow = "0.16.0"
+glow = "0.17.0"
 image = { version = "0.25", optional = true }
-surfman = { version = "0.11.0", features = ["chains"], optional = true }
+surfman = { version = "0.12.0", features = ["chains"], optional = true }
 dpi = "0.1.2"
 
 [target.'cfg(any(target_os = "linux", target_os = "android", target_os = "windows"))'.dependencies]
