@@ -64,15 +64,13 @@ pick a branch without digging through commit history.
 
 | Branch | Purpose | Servo line |
 | --- | --- | --- |
-| `main` | Recommended default for embedders | `v0.1.x` LTS |
-| `latest-release` | Tracks the newest non-LTS Servo release once one exists after `v0.1.0` | post-LTS release line |
+| `main` | Recommended default for embedders | current Servo LTS release line |
+| `latest-release` | Tracks the newest non-LTS Servo release once one exists beyond the current LTS line | newest post-LTS release line |
 | `experimental` | Integration work against upstream Servo head | upstream `main` |
 | `servo-wgpu` | Fork-specific work for the WebRender wgpu backend and related experiments | custom forks |
 
-As of April 18, 2026, Servo `v0.1.0` is both the current LTS release and the
-latest release, so `main` is the branch most users should follow. The older
-`v0.0.6` compatibility line is intended to live on a dedicated maintenance
-branch rather than remain the default embedder path.
+`main` is the branch most users should follow. `latest-release` only diverges
+once Servo ships a newer stable, non-LTS release beyond the current LTS line.
 
 ## Platform support
 
@@ -85,7 +83,7 @@ branch rather than remain the default embedder path.
 ## Prerequisites
 
 - **Rust 1.92+** (pinned in `rust-toolchain.toml`; required by wgpu 29)
-- **Servo v0.1.0** on `main` (fetched automatically via git dependency)
+- **Servo current LTS release** on `main` (resolved via Cargo dependency)
 - **Windows**: ANGLE DLLs (`libEGL.dll`, `libGLESv2.dll`) must be next to the executable at runtime. They're built by `mozangle` during compilation — find them in `target/debug/build/mozangle-*/out/` and copy to `target/debug/`. If using a custom `CARGO_TARGET_DIR`, copy them there too.
 - **Windows without nasm**: set `AWS_LC_SYS_NO_ASM=1` before building (Servo pulls `aws-lc-rs`).
 

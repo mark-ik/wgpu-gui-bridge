@@ -1,0 +1,165 @@
+name: Sync Latest Release Branch
+
+on:
+  schedule:
+    - cron: "43 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  AWS_LC_SYS_NO_ASM: "1"
+
+jobs:
+  sync-latest-release:
+    name: Sync latest-release to newest non-LTS Servo release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Resolve newest eligible Servo release
+        id: servo
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          def parse_version(tag: str) -> tuple[int, ...]:
+              tag = tag.lstrip("v")
+              return tuple(int(part) for part in tag.split("."))
+
+          req = urllib.request.Request(
+              "https://api.github.com/repos/servo/servo/releases",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          with urllib.request.urlopen(req) as response:
+              releases = json.load(response)
+
+          stable = [r for r in releases if not r["draft"] and not r["prerelease"]]
+          lts = next(
+              (
+                  release
+                  for release in stable
+                  if "lts" in (release.get("name") or "").lower()
+                  or "lts" in (release.get("tag_name") or "").lower()
+              ),
+              None,
+          )
+          latest_non_lts = next(
+              (
+                  release
+                  for release in stable
+                  if "lts" not in (release.get("name") or "").lower()
+                  and "lts" not in (release.get("tag_name") or "").lower()
+              ),
+              None,
+          )
+
+          should_sync = False
+          if lts and latest_non_lts:
+              should_sync = parse_version(latest_non_lts["tag_name"]) > parse_version(lts["tag_name"])
+
+          output_path = os.environ["GITHUB_OUTPUT"]
+          with open(output_path, "a", encoding="utf-8") as output:
+              output.write(f"should_sync={'true' if should_sync else 'false'}\n")
+              if latest_non_lts:
+                  output.write(f"tag={latest_non_lts['tag_name']}\n")
+                  output.write(f"version={latest_non_lts['tag_name'].lstrip('v')}\n")
+          PY
+
+      - name: Stop if no newer non-LTS release exists
+        if: steps.servo.outputs.should_sync != 'true'
+        run: echo "No newer non-LTS Servo release is available beyond the current LTS line."
+
+      - name: Switch to latest-release
+        if: steps.servo.outputs.should_sync == 'true'
+        run: |
+          git fetch origin latest-release
+          git checkout latest-release
+          git reset --hard origin/latest-release
+
+      - name: Rewrite Servo version pins
+        if: steps.servo.outputs.should_sync == 'true'
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          version = "${{ steps.servo.outputs.version }}"
+          cargo_replacement = f'servo = "{version}"'
+
+          cargo_files = [
+              Path("servo-wgpu-interop-adapter/Cargo.toml"),
+              Path("demo-servo-winit/Cargo.toml"),
+              Path("demo-servo-iced/Cargo.toml"),
+              Path("demo-servo-xilem/Cargo.toml"),
+              Path("demo-servo-gpui/Cargo.toml"),
+          ]
+
+          for path in cargo_files:
+              text = path.read_text(encoding="utf-8")
+              updated = re.sub(
+                  r'servo = "(?:[^"]+)"',
+                  cargo_replacement,
+                  text,
+              )
+              updated = re.sub(
+                  r'servo = \{ git = "https://github\.com/servo/servo", rev = "[0-9a-f]{40}" \}',
+                  cargo_replacement,
+                  updated,
+              )
+              path.write_text(updated, encoding="utf-8")
+
+          adapter_readme = Path("servo-wgpu-interop-adapter/README.md")
+          text = adapter_readme.read_text(encoding="utf-8")
+          text = re.sub(r'servo = "(?:[^"]+)"', cargo_replacement, text)
+          adapter_readme.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Refresh lockfile
+        if: steps.servo.outputs.should_sync == 'true'
+        run: cargo update
+
+      - name: Validate adapter and reference demo
+        if: steps.servo.outputs.should_sync == 'true'
+        run: |
+          cargo check -p servo-wgpu-interop-adapter --features servo
+          cargo check -p demo-servo-winit
+
+      - name: Commit changes
+        if: steps.servo.outputs.should_sync == 'true'
+        run: |
+          if git diff --quiet; then
+            echo "latest-release already targets Servo ${{ steps.servo.outputs.tag }}."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock servo-wgpu-interop-adapter/Cargo.toml servo-wgpu-interop-adapter/README.md demo-servo-winit/Cargo.toml demo-servo-iced/Cargo.toml demo-servo-xilem/Cargo.toml demo-servo-gpui/Cargo.toml
+          git commit -m "latest-release: sync Servo release to ${{ steps.servo.outputs.tag }}"
+
+      - name: Push latest-release
+        if: steps.servo.outputs.should_sync == 'true'
+        run: |
+          if [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/latest-release)" ]; then
+            echo "latest-release is already up to date."
+            exit 0
+          fi
+          git push origin latest-release
