@@ -2,7 +2,7 @@ name: Sync Latest Release Branch
 
 on:
   schedule:
-    - cron: "43 */6 * * *"
+    - cron: "43 6 * * 1"
   workflow_dispatch:
 
 permissions:
