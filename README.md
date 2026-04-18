@@ -2,6 +2,10 @@
 
 Rust workspace for embedding [Servo](https://servo.org) web content into host applications. It provides the low-level texture interop plumbing (GL/Vulkan/Metal/DX12 → wgpu) and a set of reference demos showing how to embed Servo in different GUI frameworks.
 
+This branch, `servo-0.0.6-wgpu-28`, is the compatibility line for Servo `v0.0.6`
+and host `wgpu 28`. If you are targeting newer released Servo lines, use the
+default branch instead.
+
 If you're looking to embed a web renderer in your Rust application, start with the demo closest to your stack and adapt from there. No promises! These are generated reference implementations to see what's possible, but the core interop crate is hopefully reusable and framework-agnostic.
 
 Also, to be clear and upfront, I used AI for pretty much all of it, adapting the Slint folks' Servo embedding example, and I think it turned out pretty well, considering. The demos are a bit rough but should be straightforward to understand and adapt. I wanted to see Servo in some more esoteric GUI frameworks, but I don't have Linux or Mac hardware to test those, so contributions are very welcome!
@@ -12,6 +16,13 @@ Also, to be clear and upfront, I used AI for pretty much all of it, adapting the
 | --- | --- |
 | [`wgpu-native-texture-interop`](wgpu-native-texture-interop/) | Core library: imports native GPU textures (GL FBO, Vulkan image, Metal IOSurface) into host-owned `wgpu` textures. Framework-agnostic, no Servo dependency required. |
 | [`servo-wgpu-interop-adapter`](servo-wgpu-interop-adapter/) | Servo-specific adapter: wraps Servo's offscreen rendering context and bridges it to the core interop crate. Provides `ServoWgpuRenderingContext` for CPU readback and `ServoWgpuInteropAdapter` for zero-copy GPU import. |
+
+## Branch compatibility
+
+| Branch | Servo line | Host `wgpu` line | Notes |
+| --- | --- | --- | --- |
+| `main` | Newer released Servo line | Newer host `wgpu` line | Preferred branch for general embedding work |
+| `servo-0.0.6-wgpu-28` | `v0.0.6` | `28.x` | Legacy compatibility line |
 
 ## Demos
 
@@ -37,7 +48,7 @@ Each demo embeds Servo in a different Rust GUI framework to show that the approa
 # Core crate tests
 cargo test -p wgpu-native-texture-interop
 
-# Build check (requires Servo git dependency)
+# Build check (requires Servo v0.0.6 via git tag)
 cargo check -p servo-wgpu-interop-adapter --features servo
 
 # Run a demo
@@ -74,7 +85,7 @@ cargo run -p demo-servo-iced -- https://example.com
 
 The demos are designed as copy-and-adapt references. The general pattern:
 
-1. **Add dependencies**: `libservo`, `servo-wgpu-interop-adapter` (with `features = ["servo"]`), and your GUI framework.
+1. **Add dependencies**: `libservo`, `servo-wgpu-interop-adapter` (with `features = ["servo"]`), and your GUI framework. This branch is intended for projects already pinned to Servo `v0.0.6` and host `wgpu 28`.
 2. **Initialize Servo**: Create a `ServoWgpuRenderingContext`, build a `Servo` instance with `ServoBuilder`, create a `WebView` with `WebViewBuilder`, and navigate to a URL.
 3. **Pump the event loop**: Call `servo.spin_event_loop()` each frame to let Servo process network/layout/paint work.
 4. **Read frames**: Call `render_context.read_full_frame()` to get an `RgbaImage` of the current page.

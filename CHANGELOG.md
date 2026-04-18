@@ -6,6 +6,9 @@ All notable changes to this project will be documented here.
 
 ### Added
 
+- `README.md`: clarify that `servo-0.0.6-wgpu-28` is the Servo `v0.0.6` plus
+  host `wgpu 28` compatibility branch and document the branch matrix
+
 - `demo-servo-xilem`: Servo embedded in Xilem 0.4 with URL bar, CPU readback,
   and full input forwarding (mouse, scroll, keyboard)
 - `demo-servo-iced`: Servo embedded in iced 0.14 with URL bar, CPU readback,
