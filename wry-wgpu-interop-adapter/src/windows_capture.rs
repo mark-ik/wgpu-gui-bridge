@@ -43,6 +43,36 @@ impl WebView2Dx12SharedFrame {
     }
 }
 
+/// A capture frame that already has a DXGI/D3D shared handle.
+///
+/// This is the narrow handoff shape the WebView2 capture implementation should
+/// try to reach after receiving a `Direct3D11CaptureFrame`. If the captured
+/// `ID3D11Texture2D` can expose a handle that `ID3D12Device::OpenSharedHandle`
+/// accepts, no CPU readback is needed.
+#[derive(Clone, Copy, Debug)]
+pub struct WebView2DxgiSharedHandleFrame {
+    pub size: PhysicalSize<u32>,
+    pub format: wgpu::TextureFormat,
+    pub generation: u64,
+    /// NT shared handle. The caller remains responsible for closing its copy.
+    pub shared_handle: *mut std::ffi::c_void,
+}
+
+impl WebView2DxgiSharedHandleFrame {
+    pub fn into_dx12_frame(self) -> WebView2Dx12SharedFrame {
+        WebView2Dx12SharedFrame {
+            size: self.size,
+            format: self.format,
+            generation: self.generation,
+            shared_handle: self.shared_handle,
+        }
+    }
+
+    pub fn into_surface_frame(self) -> WryWebSurfaceFrame {
+        self.into_dx12_frame().into_surface_frame()
+    }
+}
+
 /// Describes the Windows proof path without owning COM/WinRT objects yet.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WebView2CompositionCapturePlan {
@@ -73,6 +103,25 @@ pub trait D3D11ToDx12Bridge {
         &self,
         frame: WebView2D3D11CaptureFrame,
     ) -> Result<WebView2Dx12SharedFrame, WryWebSurfaceError>;
+}
+
+/// Bridge implementation for capture paths that can already produce a
+/// D3D12-openable DXGI shared handle.
+#[derive(Clone, Debug, Default)]
+pub struct DxgiSharedHandleBridge;
+
+impl DxgiSharedHandleBridge {
+    pub fn bridge_shared_handle(
+        &self,
+        frame: WebView2DxgiSharedHandleFrame,
+    ) -> Result<WebView2Dx12SharedFrame, WryWebSurfaceError> {
+        if frame.shared_handle.is_null() {
+            return Err(WryWebSurfaceError::Platform(
+                "WebView2 capture shared handle was null".to_string(),
+            ));
+        }
+        Ok(frame.into_dx12_frame())
+    }
 }
 
 #[derive(Clone, Debug, Default)]
