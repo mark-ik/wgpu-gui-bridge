@@ -2135,6 +2135,7 @@ name = "demo-wry-winit"
 version = "0.1.0"
 dependencies = [
  "pollster 0.4.0",
+ "raw-window-handle",
  "wgpu 29.0.1",
  "wgpu-native-texture-interop",
  "winit",

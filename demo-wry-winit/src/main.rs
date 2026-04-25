@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+#[cfg(target_os = "windows")]
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use wgpu_native_texture_interop::{
     HostWgpuContext, ImportOptions, TextureImporter, WgpuTextureImporter,
 };
@@ -106,7 +108,7 @@ impl AppState {
         println!("initial producer frame: {}", frame_label(&frame));
 
         #[cfg(target_os = "windows")]
-        run_windows_shared_texture_probe(&host)?;
+        run_windows_shared_texture_probe(&window, &host)?;
 
         Ok(Self {
             window,
@@ -118,11 +120,12 @@ impl AppState {
 
 #[cfg(target_os = "windows")]
 fn run_windows_shared_texture_probe(
+    window: &Window,
     host: &HostWgpuContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use wry_wgpu_interop_adapter::windows_capture::{
-        D3D11SharedTextureFactory, DxgiSharedHandleBridge, close_shared_handle,
-        probe_graphics_capture_prerequisites,
+        D3D11SharedTextureFactory, DxgiSharedHandleBridge, capture_window_frame_once,
+        close_shared_handle, probe_graphics_capture_prerequisites,
     };
 
     let graphics_capture = probe_graphics_capture_prerequisites()?;
@@ -158,7 +161,39 @@ fn run_windows_shared_texture_probe(
         close_shared_handle(handle)?;
     }
 
+    let hwnd = hwnd_from_window(window)?;
+    let captured = unsafe { capture_window_frame_once(hwnd, std::time::Duration::from_secs(2)) }?;
+    let captured_handle = captured.shared_frame.shared_handle;
+    let captured_dx12 = DxgiSharedHandleBridge.bridge_shared_handle(captured.shared_frame)?;
+    let captured_surface_frame = captured_dx12.into_surface_frame();
+    let WryWebSurfaceFrame::Native(captured_native_frame) = captured_surface_frame else {
+        return Err("captured window bridge did not produce a native frame".into());
+    };
+    let captured_imported =
+        importer.import_frame(&captured_native_frame, &ImportOptions::default())?;
+    println!(
+        "GraphicsCapture window probe: captured {}x{}, imported {:?} {}x{} generation {}",
+        captured.content_size.width,
+        captured.content_size.height,
+        captured_imported.format,
+        captured_imported.size.width,
+        captured_imported.size.height,
+        captured_imported.generation
+    );
+    unsafe {
+        close_shared_handle(captured_handle)?;
+    }
+
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn hwnd_from_window(window: &Window) -> Result<*mut std::ffi::c_void, Box<dyn std::error::Error>> {
+    let handle = window.window_handle()?.as_raw();
+    match handle {
+        RawWindowHandle::Win32(handle) => Ok(handle.hwnd.get() as *mut std::ffi::c_void),
+        other => Err(format!("expected Win32 raw window handle, got {other:?}").into()),
+    }
 }
 
 async fn create_host_device()
