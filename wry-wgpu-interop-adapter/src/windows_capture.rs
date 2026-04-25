@@ -7,6 +7,26 @@
 
 use dpi::PhysicalSize;
 use wgpu_native_texture_interop::{Dx12SharedTexture, NativeFrame, SyncMechanism};
+use windows::Win32::{
+    Foundation::{HANDLE, HMODULE},
+    Graphics::{
+        Direct3D::{
+            D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_11_0,
+            D3D_FEATURE_LEVEL_11_1,
+        },
+        Direct3D11::{
+            D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC,
+            D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext,
+            ID3D11Texture2D,
+        },
+        Dxgi::{
+            Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC},
+            DXGI_SHARED_RESOURCE_READ, DXGI_SHARED_RESOURCE_WRITE, IDXGIResource1,
+        },
+    },
+};
+use windows::core::{Interface, PCWSTR};
 
 use crate::{WryWebSurfaceError, WryWebSurfaceFrame};
 
@@ -19,6 +39,109 @@ pub struct WebView2D3D11CaptureFrame {
     pub generation: u64,
     /// Raw `ID3D11Texture2D *`. The capture owner retains lifetime.
     pub raw_d3d11_texture: *mut std::ffi::c_void,
+}
+
+/// Owns a D3D11 device that can allocate NT-handle-shareable textures.
+///
+/// This is not the final WebView2 capture producer. It is the reusable helper
+/// the producer needs once it receives `Direct3D11CaptureFrame.Surface` from
+/// `Windows.Graphics.Capture`: either export a compatible capture texture
+/// directly or copy the capture texture into a texture allocated here.
+#[derive(Clone, Debug)]
+pub struct D3D11SharedTextureFactory {
+    device: ID3D11Device,
+    #[allow(dead_code)]
+    context: ID3D11DeviceContext,
+}
+
+impl D3D11SharedTextureFactory {
+    pub fn new_hardware() -> Result<Self, WryWebSurfaceError> {
+        let mut device = None;
+        let mut context = None;
+        let mut feature_level = D3D_FEATURE_LEVEL::default();
+        let feature_levels = [D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0];
+
+        unsafe {
+            D3D11CreateDevice(
+                None,
+                D3D_DRIVER_TYPE_HARDWARE,
+                HMODULE::default(),
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                Some(&feature_levels),
+                D3D11_SDK_VERSION,
+                Some(&mut device),
+                Some(&mut feature_level),
+                Some(&mut context),
+            )
+        }
+        .map_err(|error| {
+            WryWebSurfaceError::Platform(format!("D3D11CreateDevice failed: {error}"))
+        })?;
+
+        Ok(Self {
+            device: device.ok_or_else(|| {
+                WryWebSurfaceError::Platform("D3D11CreateDevice returned no device".to_string())
+            })?,
+            context: context.ok_or_else(|| {
+                WryWebSurfaceError::Platform(
+                    "D3D11CreateDevice returned no immediate context".to_string(),
+                )
+            })?,
+        })
+    }
+
+    pub fn create_shared_texture_frame(
+        &self,
+        size: PhysicalSize<u32>,
+        format: wgpu::TextureFormat,
+        generation: u64,
+    ) -> Result<WebView2DxgiSharedHandleFrame, WryWebSurfaceError> {
+        let dxgi_format = dxgi_format_for_wgpu(format)?;
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: size.width,
+            Height: size.height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: dxgi_format,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 as u32,
+        };
+
+        let mut texture = None;
+        unsafe { self.device.CreateTexture2D(&desc, None, Some(&mut texture)) }.map_err(
+            |error| WryWebSurfaceError::Platform(format!("CreateTexture2D failed: {error}")),
+        )?;
+
+        let texture = texture.ok_or_else(|| {
+            WryWebSurfaceError::Platform("CreateTexture2D returned no texture".to_string())
+        })?;
+
+        shared_handle_from_texture(&texture, size, format, generation)
+    }
+
+    pub fn copy_capture_into_shared_frame(
+        &self,
+        capture: WebView2D3D11CaptureFrame,
+    ) -> Result<WebView2DxgiSharedHandleFrame, WryWebSurfaceError> {
+        let target =
+            self.create_shared_texture_frame(capture.size, capture.format, capture.generation)?;
+        let target_texture = texture_from_shared_handle(&self.device, target.shared_handle)?;
+
+        with_borrowed_d3d11_texture(capture.raw_d3d11_texture, |source| {
+            unsafe {
+                self.context.CopyResource(&target_texture, source);
+            }
+            Ok(())
+        })?;
+
+        Ok(target)
+    }
 }
 
 /// Result of converting a captured D3D11 frame into an importable D3D12 frame.
@@ -73,6 +196,14 @@ impl WebView2DxgiSharedHandleFrame {
     }
 }
 
+pub fn export_capture_frame_shared_handle(
+    frame: WebView2D3D11CaptureFrame,
+) -> Result<WebView2DxgiSharedHandleFrame, WryWebSurfaceError> {
+    with_borrowed_d3d11_texture(frame.raw_d3d11_texture, |texture| {
+        shared_handle_from_texture(texture, frame.size, frame.format, frame.generation)
+    })
+}
+
 /// Describes the Windows proof path without owning COM/WinRT objects yet.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WebView2CompositionCapturePlan {
@@ -124,6 +255,15 @@ impl DxgiSharedHandleBridge {
     }
 }
 
+impl D3D11ToDx12Bridge for DxgiSharedHandleBridge {
+    fn bridge_frame(
+        &self,
+        frame: WebView2D3D11CaptureFrame,
+    ) -> Result<WebView2Dx12SharedFrame, WryWebSurfaceError> {
+        self.bridge_shared_handle(export_capture_frame_shared_handle(frame)?)
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct UnsupportedD3D11ToDx12Bridge;
 
@@ -136,4 +276,90 @@ impl D3D11ToDx12Bridge for UnsupportedD3D11ToDx12Bridge {
             "D3D11 capture texture to D3D12 shared texture bridge is not implemented yet",
         ))
     }
+}
+
+fn dxgi_format_for_wgpu(
+    format: wgpu::TextureFormat,
+) -> Result<windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT, WryWebSurfaceError> {
+    match format {
+        wgpu::TextureFormat::Rgba8Unorm => Ok(DXGI_FORMAT_R8G8B8A8_UNORM),
+        wgpu::TextureFormat::Bgra8Unorm => Ok(DXGI_FORMAT_B8G8R8A8_UNORM),
+        _ => Err(WryWebSurfaceError::Unsupported(
+            "only Rgba8Unorm and Bgra8Unorm D3D11 capture textures are supported",
+        )),
+    }
+}
+
+fn with_borrowed_d3d11_texture<R>(
+    raw: *mut std::ffi::c_void,
+    f: impl FnOnce(&ID3D11Texture2D) -> Result<R, WryWebSurfaceError>,
+) -> Result<R, WryWebSurfaceError> {
+    if raw.is_null() {
+        return Err(WryWebSurfaceError::Platform(
+            "D3D11 capture texture pointer was null".to_string(),
+        ));
+    }
+
+    unsafe { ID3D11Texture2D::from_raw_borrowed(&raw) }
+        .ok_or_else(|| {
+            WryWebSurfaceError::Platform("failed to borrow ID3D11Texture2D pointer".to_string())
+        })
+        .and_then(f)
+}
+
+fn shared_handle_from_texture(
+    texture: &ID3D11Texture2D,
+    size: PhysicalSize<u32>,
+    format: wgpu::TextureFormat,
+    generation: u64,
+) -> Result<WebView2DxgiSharedHandleFrame, WryWebSurfaceError> {
+    let resource = texture.cast::<IDXGIResource1>().map_err(|error| {
+        WryWebSurfaceError::Platform(format!(
+            "ID3D11Texture2D cast to IDXGIResource1 failed: {error}"
+        ))
+    })?;
+
+    let handle = unsafe {
+        resource.CreateSharedHandle(
+            None,
+            (DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE).0,
+            PCWSTR::null(),
+        )
+    }
+    .map_err(|error| {
+        WryWebSurfaceError::Platform(format!(
+            "IDXGIResource1::CreateSharedHandle failed: {error}"
+        ))
+    })?;
+
+    Ok(WebView2DxgiSharedHandleFrame {
+        size,
+        format,
+        generation,
+        shared_handle: handle.0 as *mut std::ffi::c_void,
+    })
+}
+
+fn texture_from_shared_handle(
+    device: &ID3D11Device,
+    shared_handle: *mut std::ffi::c_void,
+) -> Result<ID3D11Texture2D, WryWebSurfaceError> {
+    if shared_handle.is_null() {
+        return Err(WryWebSurfaceError::Platform(
+            "shared D3D11 texture handle was null".to_string(),
+        ));
+    }
+
+    let mut texture = None;
+    unsafe {
+        device.OpenSharedResource(
+            HANDLE(shared_handle),
+            &mut texture as *mut Option<ID3D11Texture2D> as *mut _,
+        )
+    }
+    .map_err(|error| WryWebSurfaceError::Platform(format!("OpenSharedResource failed: {error}")))?;
+
+    texture.ok_or_else(|| {
+        WryWebSurfaceError::Platform("OpenSharedResource returned no texture".to_string())
+    })
 }

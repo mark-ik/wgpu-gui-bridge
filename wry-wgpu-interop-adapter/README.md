@@ -29,7 +29,14 @@ WebView2 CompositionController visual
 
 WebView2 `TextureStream` is not treated as the primary path because it is a page/media texture stream API, not a whole-webview compositor-output API.
 
+The Windows module now contains the first concrete bridge helper:
+
+- `D3D11SharedTextureFactory::create_shared_texture_frame(...)` allocates an NT-handle-shareable D3D11 texture.
+- `export_capture_frame_shared_handle(...)` attempts to export an existing captured `ID3D11Texture2D`.
+- `D3D11SharedTextureFactory::copy_capture_into_shared_frame(...)` copies a captured D3D11 texture into an adapter-owned shared texture when direct export is not available.
+
+The next proof point is to feed this from a real WebView2 `CompositionController` visual captured with `Windows.Graphics.Capture`.
+
 ## Fallbacks
 
 `NativeChildOverlay` remains the normal Wry fallback. `CpuSnapshot` is useful for diagnostics, thumbnails, and low-frequency preview paths, but it is not the target for interactive composited web surfaces.
-
