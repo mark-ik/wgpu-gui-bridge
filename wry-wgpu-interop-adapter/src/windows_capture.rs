@@ -22,11 +22,19 @@ use windows::Win32::{
         },
         Dxgi::{
             Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC},
-            DXGI_SHARED_RESOURCE_READ, DXGI_SHARED_RESOURCE_WRITE, IDXGIResource1,
+            DXGI_SHARED_RESOURCE_READ, DXGI_SHARED_RESOURCE_WRITE, IDXGIDevice, IDXGIResource1,
         },
     },
+    System::WinRT::Direct3D11::CreateDirect3D11DeviceFromDXGIDevice,
 };
-use windows::core::{Interface, PCWSTR};
+use windows::{
+    Graphics::{
+        Capture::{Direct3D11CaptureFramePool, GraphicsCaptureSession},
+        DirectX::{Direct3D11::IDirect3DDevice, DirectXPixelFormat},
+        SizeInt32,
+    },
+    core::{Interface, PCWSTR},
+};
 
 use crate::{WryWebSurfaceError, WryWebSurfaceFrame};
 
@@ -126,6 +134,23 @@ impl D3D11SharedTextureFactory {
         shared_handle_from_texture(&texture, size, format, generation)
     }
 
+    pub fn create_winrt_direct3d_device(&self) -> Result<IDirect3DDevice, WryWebSurfaceError> {
+        let dxgi_device = self.device.cast::<IDXGIDevice>().map_err(|error| {
+            WryWebSurfaceError::Platform(format!(
+                "ID3D11Device cast to IDXGIDevice failed: {error}"
+            ))
+        })?;
+        let inspectable =
+            unsafe { CreateDirect3D11DeviceFromDXGIDevice(&dxgi_device) }.map_err(|error| {
+                WryWebSurfaceError::Platform(format!(
+                    "CreateDirect3D11DeviceFromDXGIDevice failed: {error}"
+                ))
+            })?;
+        inspectable.cast::<IDirect3DDevice>().map_err(|error| {
+            WryWebSurfaceError::Platform(format!("IDirect3DDevice cast failed: {error}"))
+        })
+    }
+
     pub fn copy_capture_into_shared_frame(
         &self,
         capture: WebView2D3D11CaptureFrame,
@@ -143,6 +168,53 @@ impl D3D11SharedTextureFactory {
 
         Ok(target)
     }
+}
+
+/// Result of probing the Windows.Graphics.Capture side of the pipeline.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GraphicsCaptureProbe {
+    pub session_supported: bool,
+    pub winrt_d3d_device_created: bool,
+    pub free_threaded_frame_pool_created: bool,
+}
+
+pub fn probe_graphics_capture_prerequisites() -> Result<GraphicsCaptureProbe, WryWebSurfaceError> {
+    let session_supported = GraphicsCaptureSession::IsSupported().map_err(|error| {
+        WryWebSurfaceError::Platform(format!(
+            "GraphicsCaptureSession::IsSupported failed: {error}"
+        ))
+    })?;
+    if !session_supported {
+        return Ok(GraphicsCaptureProbe {
+            session_supported,
+            winrt_d3d_device_created: false,
+            free_threaded_frame_pool_created: false,
+        });
+    }
+
+    let factory = D3D11SharedTextureFactory::new_hardware()?;
+    let device = factory.create_winrt_direct3d_device()?;
+    let frame_pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
+        &device,
+        DirectXPixelFormat::B8G8R8A8UIntNormalized,
+        1,
+        SizeInt32 {
+            Width: 64,
+            Height: 64,
+        },
+    )
+    .map_err(|error| {
+        WryWebSurfaceError::Platform(format!(
+            "Direct3D11CaptureFramePool::CreateFreeThreaded failed: {error}"
+        ))
+    })?;
+    drop(frame_pool);
+
+    Ok(GraphicsCaptureProbe {
+        session_supported,
+        winrt_d3d_device_created: true,
+        free_threaded_frame_pool_created: true,
+    })
 }
 
 /// Result of converting a captured D3D11 frame into an importable D3D12 frame.

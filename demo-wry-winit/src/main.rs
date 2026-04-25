@@ -122,7 +122,16 @@ fn run_windows_shared_texture_probe(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use wry_wgpu_interop_adapter::windows_capture::{
         D3D11SharedTextureFactory, DxgiSharedHandleBridge, close_shared_handle,
+        probe_graphics_capture_prerequisites,
     };
+
+    let graphics_capture = probe_graphics_capture_prerequisites()?;
+    println!(
+        "GraphicsCapture probe: session_supported={} winrt_d3d_device={} free_threaded_frame_pool={}",
+        graphics_capture.session_supported,
+        graphics_capture.winrt_d3d_device_created,
+        graphics_capture.free_threaded_frame_pool_created
+    );
 
     let factory = D3D11SharedTextureFactory::new_hardware()?;
     let shared = factory.create_shared_texture_frame(
