@@ -43,6 +43,7 @@ Each demo embeds Servo in a different Rust GUI framework to show that the approa
 | [`demo-servo-iced`](demo-servo-iced/) | [iced](https://github.com/iced-rs/iced) 0.14 | CPU readback | Elm-architecture UI with URL bar. Uses `image::allocate()` to avoid async upload flicker. |
 | [`demo-servo-gpui`](demo-servo-gpui/) | [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui) 0.2 | CPU readback | Zed's UI framework. RGBA→BGRA conversion for GPUI's `RenderImage`. |
 | [`demo-raw-gl`](demo-raw-gl/) | glutin + glow | GPU import | Standalone GL→wgpu demo (spinning triangle). No Servo dependency — proves the interop layer works independently. |
+| [`demo-wry-winit`](demo-wry-winit/) | winit + wgpu | Capability probe | Windows-first Wry/WebView2 texture-path probe. Initializes a host wgpu device and reports the adapter-selected web surface mode. |
 
 ### Rendering paths
 
@@ -72,6 +73,7 @@ Pass a URL to any Servo demo:
 ```bash
 cargo run -p demo-servo-winit -- https://servo.org
 cargo run -p demo-servo-iced -- https://example.com
+cargo run -p demo-wry-winit
 ```
 
 ## Branches

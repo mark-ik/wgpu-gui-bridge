@@ -1,0 +1,13 @@
+[package]
+name = "demo-wry-winit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Minimal winit + wgpu host probe for wry-wgpu-interop-adapter"
+
+[dependencies]
+pollster = "0.4.0"
+wgpu = { version = "29.0.1", features = ["metal"] }
+wgpu-native-texture-interop = { path = "../wgpu-native-texture-interop", default-features = false }
+winit = "0.30.12"
+wry-wgpu-interop-adapter = { path = "../wry-wgpu-interop-adapter" }
