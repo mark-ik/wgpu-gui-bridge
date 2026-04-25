@@ -8,7 +8,7 @@
 use dpi::PhysicalSize;
 use wgpu_native_texture_interop::{Dx12SharedTexture, NativeFrame, SyncMechanism};
 use windows::Win32::{
-    Foundation::{HANDLE, HMODULE},
+    Foundation::{CloseHandle, HANDLE, HMODULE},
     Graphics::{
         Direct3D::{
             D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_11_0,
@@ -16,9 +16,9 @@ use windows::Win32::{
         },
         Direct3D11::{
             D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-            D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC,
-            D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext,
-            ID3D11Texture2D,
+            D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX, D3D11_RESOURCE_MISC_SHARED_NTHANDLE,
+            D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11CreateDevice,
+            ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D,
         },
         Dxgi::{
             Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC},
@@ -110,7 +110,8 @@ impl D3D11SharedTextureFactory {
             Usage: D3D11_USAGE_DEFAULT,
             BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
             CPUAccessFlags: 0,
-            MiscFlags: D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 as u32,
+            MiscFlags: (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0
+                | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32,
         };
 
         let mut texture = None;
@@ -194,6 +195,22 @@ impl WebView2DxgiSharedHandleFrame {
     pub fn into_surface_frame(self) -> WryWebSurfaceFrame {
         self.into_dx12_frame().into_surface_frame()
     }
+}
+
+/// Close an NT shared handle returned by this module after the consumer has
+/// opened its own resource reference.
+///
+/// # Safety
+///
+/// `handle` must be a valid Win32 handle owned by the caller, and it must not
+/// be used after this call succeeds.
+pub unsafe fn close_shared_handle(handle: *mut std::ffi::c_void) -> Result<(), WryWebSurfaceError> {
+    if handle.is_null() {
+        return Ok(());
+    }
+
+    unsafe { CloseHandle(HANDLE(handle)) }
+        .map_err(|error| WryWebSurfaceError::Platform(format!("CloseHandle failed: {error}")))
 }
 
 pub fn export_capture_frame_shared_handle(

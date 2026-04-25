@@ -13,12 +13,16 @@ use wry_wgpu_interop_adapter::{
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoop::new()?;
-    let mut app = App::default();
+    let mut app = App {
+        probe_only: std::env::args().any(|arg| arg == "--probe-only"),
+        state: None,
+    };
     Ok(event_loop.run_app(&mut app)?)
 }
 
 #[derive(Default)]
 struct App {
+    probe_only: bool,
     state: Option<AppState>,
 }
 
@@ -35,7 +39,12 @@ impl ApplicationHandler for App {
         }
 
         match AppState::new(event_loop) {
-            Ok(state) => self.state = Some(state),
+            Ok(state) => {
+                self.state = Some(state);
+                if self.probe_only {
+                    event_loop.exit();
+                }
+            }
             Err(error) => {
                 eprintln!("demo-wry-winit: initialization failed: {error}");
                 event_loop.exit();
@@ -94,12 +103,38 @@ impl AppState {
         let frame = producer.acquire_frame()?;
         println!("initial producer frame: {}", frame_label(&frame));
 
+        #[cfg(target_os = "windows")]
+        run_windows_shared_texture_probe()?;
+
         Ok(Self {
             window,
             _device: device,
             _queue: queue,
         })
     }
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_shared_texture_probe() -> Result<(), Box<dyn std::error::Error>> {
+    use wry_wgpu_interop_adapter::windows_capture::{
+        D3D11SharedTextureFactory, DxgiSharedHandleBridge, close_shared_handle,
+    };
+
+    let factory = D3D11SharedTextureFactory::new_hardware()?;
+    let shared = factory.create_shared_texture_frame(
+        winit::dpi::PhysicalSize::new(64, 64),
+        wgpu::TextureFormat::Bgra8Unorm,
+        1,
+    )?;
+    let handle = shared.shared_handle;
+    let _dx12_frame = DxgiSharedHandleBridge.bridge_shared_handle(shared)?;
+    println!("D3D11 shared texture probe: exported NT handle {handle:p}");
+
+    unsafe {
+        close_shared_handle(handle)?;
+    }
+
+    Ok(())
 }
 
 async fn create_host_device()
