@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use wgpu_native_texture_interop::HostWgpuContext;
+use wgpu_native_texture_interop::{
+    HostWgpuContext, ImportOptions, TextureImporter, WgpuTextureImporter,
+};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -104,7 +106,7 @@ impl AppState {
         println!("initial producer frame: {}", frame_label(&frame));
 
         #[cfg(target_os = "windows")]
-        run_windows_shared_texture_probe()?;
+        run_windows_shared_texture_probe(&host)?;
 
         Ok(Self {
             window,
@@ -115,7 +117,9 @@ impl AppState {
 }
 
 #[cfg(target_os = "windows")]
-fn run_windows_shared_texture_probe() -> Result<(), Box<dyn std::error::Error>> {
+fn run_windows_shared_texture_probe(
+    host: &HostWgpuContext,
+) -> Result<(), Box<dyn std::error::Error>> {
     use wry_wgpu_interop_adapter::windows_capture::{
         D3D11SharedTextureFactory, DxgiSharedHandleBridge, close_shared_handle,
     };
@@ -127,8 +131,19 @@ fn run_windows_shared_texture_probe() -> Result<(), Box<dyn std::error::Error>> 
         1,
     )?;
     let handle = shared.shared_handle;
-    let _dx12_frame = DxgiSharedHandleBridge.bridge_shared_handle(shared)?;
+    let dx12_frame = DxgiSharedHandleBridge.bridge_shared_handle(shared)?;
     println!("D3D11 shared texture probe: exported NT handle {handle:p}");
+
+    let surface_frame = dx12_frame.into_surface_frame();
+    let WryWebSurfaceFrame::Native(native_frame) = surface_frame else {
+        return Err("D3D11 shared texture bridge did not produce a native frame".into());
+    };
+    let importer = WgpuTextureImporter::new(host.clone());
+    let imported = importer.import_frame(&native_frame, &ImportOptions::default())?;
+    println!(
+        "D3D11 shared texture probe: imported {:?} {}x{} generation {}",
+        imported.format, imported.size.width, imported.size.height, imported.generation
+    );
 
     unsafe {
         close_shared_handle(handle)?;
