@@ -2,10 +2,11 @@
 
 Servo-specific offscreen rendering adapter built on [`wgpu-native-texture-interop`](../wgpu-native-texture-interop/).
 
-This crate bridges Servo's rendering context to the host application. It provides two things:
+This crate bridges Servo's rendering context to the host application. It provides three things:
 
 1. **`ServoWgpuRenderingContext`** — an offscreen `RenderingContext` that Servo renders into. Supports CPU readback via `read_full_frame()` (returns an `image::RgbaImage` of the current page).
 2. **`ServoWgpuInteropAdapter`** — zero-copy GPU import path that imports Servo's GL framebuffer directly into a host `wgpu::Texture` via the core interop crate.
+3. **`SurfmanSurfaceImporter`** — a surfman-surface import transaction helper for integrations like Servo paint that already own swap-chain surfaces and just need the bind/current/frame/import/unbind sequence packaged behind one bridge API.
 
 ## Which path to use
 
@@ -18,7 +19,7 @@ The CPU readback demos ([xilem](../demo-servo-xilem/), [iced](../demo-servo-iced
 
 - **`servo`** (optional) — enables the published `servo` crate dependency and Servo trait implementations. All Servo-embedding demos enable this feature.
 
-Without `servo`, only the surfman-level types are available (useful for testing the adapter layer without pulling in all of Servo).
+Without `servo`, the surfman-level types are still available, including `SurfmanSurfaceImporter`, which makes the crate usable from Servo-adjacent integrations without pulling in the published `servo` crate.
 
 ## Usage
 

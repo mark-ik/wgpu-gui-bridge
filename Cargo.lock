@@ -2131,6 +2131,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "demo-wry-winit"
+version = "0.1.0"
+dependencies = [
+ "pollster 0.4.0",
+ "wgpu 29.0.1",
+ "wgpu-native-texture-interop",
+ "winit",
+ "wry-wgpu-interop-adapter",
+]
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9939,11 +9950,12 @@ dependencies = [
  "dpi",
  "euclid",
  "gleam",
- "glow 0.16.0",
+ "glow 0.17.0",
  "image",
  "rustls",
  "servo",
- "surfman 0.11.0",
+ "surfman 0.12.0",
+ "thiserror 2.0.18",
  "wgpu 29.0.1",
  "wgpu-native-texture-interop",
  "winit",
@@ -13811,6 +13823,18 @@ name = "writeable"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
+
+[[package]]
+name = "wry-wgpu-interop-adapter"
+version = "0.1.0"
+dependencies = [
+ "dpi",
+ "image",
+ "thiserror 2.0.18",
+ "wgpu 29.0.1",
+ "wgpu-native-texture-interop",
+ "windows 0.62.2",
+]
 
 [[package]]
 name = "x11-clipboard"

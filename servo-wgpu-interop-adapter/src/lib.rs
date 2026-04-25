@@ -3,7 +3,8 @@
 use std::{cell::RefCell, rc::Rc};
 
 use euclid::default::Size2D;
-use surfman::{Connection, Device, SurfaceType, chains::SwapChain};
+use surfman::{Connection, Device, Surface, SurfaceType, chains::SwapChain};
+use thiserror::Error;
 use wgpu_native_texture_interop::{
     FrameProducer, HostWgpuContext, ImportOptions, ImportedTexture, InteropError, TextureImporter,
     WgpuTextureImporter,
@@ -16,11 +17,140 @@ pub use image;
 #[cfg(feature = "servo")]
 use servo::{DeviceIntRect, RenderingContext};
 #[cfg(feature = "servo")]
-use surfman::{Surface, SurfaceTexture, chains::PreserveBuffer};
+use surfman::{SurfaceTexture, chains::PreserveBuffer};
 
 pub use wgpu_native_texture_interop::{
     ImportOptions as InteropImportOptions, ImportedTexture as InteropImportedTexture,
 };
+
+pub struct ImportedSurfmanSurface {
+    pub imported_texture: ImportedTexture,
+    pub surface: Surface,
+}
+
+#[derive(Debug, Error)]
+pub enum SurfmanSurfaceImportError {
+    #[error("failed to bind surfman surface")]
+    BindSurface(surfman::Error),
+    #[error("failed to make surfman context current")]
+    MakeCurrent(surfman::Error),
+    #[error("failed to acquire frame from surfman context")]
+    AcquireFrame(#[source] InteropError),
+    #[error("failed to import frame into wgpu")]
+    ImportFrame(#[source] InteropError),
+    #[error("failed to unbind surfman surface")]
+    UnbindSurface(surfman::Error),
+    #[error("import completed without returning a surfman surface")]
+    MissingSurfaceAfterImport,
+}
+
+#[derive(Debug)]
+pub struct SurfmanSurfaceImportFailure {
+    error: SurfmanSurfaceImportError,
+    surface: Option<Surface>,
+}
+
+impl SurfmanSurfaceImportFailure {
+    pub fn error(&self) -> &SurfmanSurfaceImportError {
+        &self.error
+    }
+
+    pub fn into_parts(self) -> (SurfmanSurfaceImportError, Option<Surface>) {
+        (self.error, self.surface)
+    }
+}
+
+pub struct SurfmanSurfaceImporter {
+    frame_context: Rc<SurfmanFrameContext>,
+    importer: WgpuTextureImporter,
+}
+
+impl SurfmanSurfaceImporter {
+    pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Result<Self, surfman::Error> {
+        let connection = Connection::new()?;
+        let adapter = connection.create_adapter()?;
+        let frame_context = Rc::new(SurfmanFrameContext::new(&connection, &adapter)?);
+        let importer = WgpuTextureImporter::new(HostWgpuContext::new(device, queue));
+
+        Ok(Self {
+            frame_context,
+            importer,
+        })
+    }
+
+    pub fn import_surface(
+        &self,
+        surface: Surface,
+        options: &ImportOptions,
+    ) -> Result<ImportedSurfmanSurface, SurfmanSurfaceImportFailure> {
+        let size = {
+            let device = self.frame_context.device.borrow();
+            let info = device.surface_info(&surface);
+            PhysicalSize::new(info.size.width as u32, info.size.height as u32)
+        };
+
+        if let Err(error) = self.frame_context.bind_surface(surface) {
+            return Err(SurfmanSurfaceImportFailure {
+                error: SurfmanSurfaceImportError::BindSurface(error),
+                surface: None,
+            });
+        }
+
+        if let Err(error) = self.frame_context.make_current() {
+            return Err(SurfmanSurfaceImportFailure {
+                error: SurfmanSurfaceImportError::MakeCurrent(error),
+                surface: self.frame_context.unbind_surface().ok().flatten(),
+            });
+        }
+
+        let mut producer = SurfmanFrameProducer::new(self.frame_context.clone(), size);
+        let frame = match producer.acquire_frame() {
+            Ok(frame) => frame,
+            Err(error) => {
+                return Err(SurfmanSurfaceImportFailure {
+                    error: SurfmanSurfaceImportError::AcquireFrame(error),
+                    surface: self.frame_context.unbind_surface().ok().flatten(),
+                });
+            },
+        };
+
+        let imported_texture = match self.importer.import_frame(&frame, options) {
+            Ok(texture) => texture,
+            Err(error) => {
+                return Err(SurfmanSurfaceImportFailure {
+                    error: SurfmanSurfaceImportError::ImportFrame(error),
+                    surface: self.frame_context.unbind_surface().ok().flatten(),
+                });
+            },
+        };
+
+        match self.frame_context.unbind_surface() {
+            Ok(Some(surface)) => Ok(ImportedSurfmanSurface {
+                imported_texture,
+                surface,
+            }),
+            Ok(None) => Err(SurfmanSurfaceImportFailure {
+                error: SurfmanSurfaceImportError::MissingSurfaceAfterImport,
+                surface: None,
+            }),
+            Err(error) => Err(SurfmanSurfaceImportFailure {
+                error: SurfmanSurfaceImportError::UnbindSurface(error),
+                surface: None,
+            }),
+        }
+    }
+
+    pub fn import_surface_default(
+        &self,
+        surface: Surface,
+    ) -> Result<ImportedSurfmanSurface, SurfmanSurfaceImportFailure> {
+        self.import_surface(surface, &ImportOptions::default())
+    }
+
+    pub fn importer(&self) -> &WgpuTextureImporter {
+        &self.importer
+    }
+}
 
 pub struct ServoWgpuRenderingContext {
     frame_producer: RefCell<SurfmanFrameProducer>,
