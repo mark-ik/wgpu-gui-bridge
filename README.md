@@ -15,6 +15,23 @@ NOTE: Though I have completed my goal for my webrender-wgpu fork and am now usin
 | [`wgpu-native-texture-interop`](wgpu-native-texture-interop/) | Core library: imports native GPU textures (GL FBO, Vulkan image, Metal IOSurface) into host-owned `wgpu` textures. Framework-agnostic, no Servo dependency required. |
 | [`servo-wgpu-interop-adapter`](servo-wgpu-interop-adapter/) | Servo-specific adapter: wraps Servo's offscreen rendering context and bridges it to the core interop crate. Provides `ServoWgpuRenderingContext` for CPU readback and `ServoWgpuInteropAdapter` for zero-copy GPU import. |
 
+### Future system-webview adapters
+
+This workspace is also the right home for future host-facing webview adapters such as a `wry-wgpu-interop-adapter`, but that adapter would not be the same kind of producer as Servo.
+
+Servo can be shaped as an offscreen renderer and can expose frames through the native texture interop layer. Wry's default backends are system webview widgets: WebView2 on Windows, WKWebView on macOS, and WebKitGTK on Linux. Those platforms usually own composition, windowing, focus, and damage behavior. A Wry adapter therefore needs to be capability-driven:
+
+```rust
+enum WebSurfaceMode {
+    ImportedTexture,
+    NativeChildOverlay,
+    CpuSnapshot,
+    Unsupported,
+}
+```
+
+The split should stay strict: `wgpu-native-texture-interop` owns native GPU resource import/export, while `wry-wgpu-interop-adapter` would own Wry/WebView platform probing, frame-source policy, fallback selection, and input/focus routing. Imported texture mode is the target when a platform exposes a real compositable frame source; native child overlays and CPU snapshots remain fallback modes, not the core abstraction.
+
 ## Demos
 
 Each demo embeds Servo in a different Rust GUI framework to show that the approach generalizes. All demos include a URL bar, clickable links, scrolling, and keyboard input forwarding.
