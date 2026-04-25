@@ -1,0 +1,24 @@
+[package]
+name = "wry-wgpu-interop-adapter"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mark-ik/wgpu-gui-bridge"
+description = "Capability-driven system webview frame adapter for wgpu-native-texture-interop"
+
+[dependencies]
+dpi = "0.1.2"
+image = "0.25"
+thiserror = "2.0.17"
+wgpu = { version = "29.0.1", features = ["metal"] }
+wgpu-native-texture-interop = { path = "../wgpu-native-texture-interop" }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+] }

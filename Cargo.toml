@@ -5,6 +5,7 @@ members = [
     "demo-servo-iced",
     "demo-servo-winit",
     "demo-servo-xilem",
+    "wry-wgpu-interop-adapter",
     "wgpu-native-texture-interop",
     "servo-wgpu-interop-adapter",
 ]
