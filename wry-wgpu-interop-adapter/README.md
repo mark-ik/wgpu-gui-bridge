@@ -34,8 +34,10 @@ The Windows module now contains the first concrete bridge helper:
 - `D3D11SharedTextureFactory::create_shared_texture_frame(...)` allocates an NT-handle-shareable D3D11 texture.
 - `export_capture_frame_shared_handle(...)` attempts to export an existing captured `ID3D11Texture2D`.
 - `D3D11SharedTextureFactory::copy_capture_into_shared_frame(...)` copies a captured D3D11 texture into an adapter-owned shared texture when direct export is not available.
+- `capture_graphics_item_frame_once(...)` captures any `GraphicsCaptureItem` into the shared-texture bridge.
+- `capture_visual_frame_once(...)` accepts a raw `Windows.UI.Composition.Visual` pointer and routes it through `GraphicsCaptureItem::CreateFromVisual`.
 
-The next proof point is to feed this from a real WebView2 `CompositionController` visual captured with `Windows.Graphics.Capture`.
+The demo currently validates the downstream path with a host-window capture item. The next proof point is to obtain a real WebView2 `CompositionController` visual, either through Wry if it exposes the necessary hook or through a direct WebView2 host shim.
 
 ## Fallbacks
 

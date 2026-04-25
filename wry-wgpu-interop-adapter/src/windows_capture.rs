@@ -36,6 +36,7 @@ use windows::{
         DirectX::{Direct3D11::IDirect3DDevice, DirectXPixelFormat},
         SizeInt32,
     },
+    UI::Composition::Visual,
     core::{Interface, PCWSTR},
 };
 
@@ -265,6 +266,43 @@ pub unsafe fn capture_window_frame_once(
         ));
     }
 
+    let item = create_capture_item_for_hwnd(HWND(hwnd))?;
+    capture_graphics_item_frame_once(&item, timeout)
+}
+
+/// Capture one frame from a Windows.UI.Composition visual.
+///
+/// This is the handoff shape expected from a WebView2 composition controller
+/// once the host can obtain the webview visual.
+///
+/// # Safety
+///
+/// `visual` must be a valid live `Windows.UI.Composition.Visual *` for the
+/// duration of the call.
+pub unsafe fn capture_visual_frame_once(
+    visual: *mut std::ffi::c_void,
+    timeout: std::time::Duration,
+) -> Result<CapturedWindowFrame, WryWebSurfaceError> {
+    if visual.is_null() {
+        return Err(WryWebSurfaceError::Platform(
+            "composition visual pointer was null".to_string(),
+        ));
+    }
+
+    with_borrowed_composition_visual(visual, |visual| {
+        let item = GraphicsCaptureItem::CreateFromVisual(visual).map_err(|error| {
+            WryWebSurfaceError::Platform(format!(
+                "GraphicsCaptureItem::CreateFromVisual failed: {error}"
+            ))
+        })?;
+        capture_graphics_item_frame_once(&item, timeout)
+    })
+}
+
+pub fn capture_graphics_item_frame_once(
+    item: &GraphicsCaptureItem,
+    timeout: std::time::Duration,
+) -> Result<CapturedWindowFrame, WryWebSurfaceError> {
     let session_supported = GraphicsCaptureSession::IsSupported().map_err(|error| {
         WryWebSurfaceError::Platform(format!(
             "GraphicsCaptureSession::IsSupported failed: {error}"
@@ -276,7 +314,6 @@ pub unsafe fn capture_window_frame_once(
         ));
     }
 
-    let item = create_capture_item_for_hwnd(HWND(hwnd))?;
     let item_size = item.Size().map_err(|error| {
         WryWebSurfaceError::Platform(format!("GraphicsCaptureItem::Size failed: {error}"))
     })?;
@@ -300,7 +337,7 @@ pub unsafe fn capture_window_frame_once(
             "Direct3D11CaptureFramePool::CreateFreeThreaded failed: {error}"
         ))
     })?;
-    let session = pool.CreateCaptureSession(&item).map_err(|error| {
+    let session = pool.CreateCaptureSession(item).map_err(|error| {
         WryWebSurfaceError::Platform(format!("CreateCaptureSession failed: {error}"))
     })?;
     let _ = session.SetIsCursorCaptureEnabled(false);
@@ -555,6 +592,25 @@ fn with_borrowed_d3d11_texture<R>(
     unsafe { ID3D11Texture2D::from_raw_borrowed(&raw) }
         .ok_or_else(|| {
             WryWebSurfaceError::Platform("failed to borrow ID3D11Texture2D pointer".to_string())
+        })
+        .and_then(f)
+}
+
+fn with_borrowed_composition_visual<R>(
+    raw: *mut std::ffi::c_void,
+    f: impl FnOnce(&Visual) -> Result<R, WryWebSurfaceError>,
+) -> Result<R, WryWebSurfaceError> {
+    if raw.is_null() {
+        return Err(WryWebSurfaceError::Platform(
+            "composition visual pointer was null".to_string(),
+        ));
+    }
+
+    unsafe { Visual::from_raw_borrowed(&raw) }
+        .ok_or_else(|| {
+            WryWebSurfaceError::Platform(
+                "failed to borrow Windows.UI.Composition.Visual pointer".to_string(),
+            )
         })
         .and_then(f)
 }

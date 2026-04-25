@@ -8,7 +8,8 @@ This demo does not create a Wry webview yet. Its job is to prove the host side o
 2. initialize a host `wgpu` device,
 3. wrap it in `HostWgpuContext`,
 4. ask `wry-wgpu-interop-adapter` which web-surface mode is viable,
-5. keep a small window open so the next slice has a real host loop for WebView2 CompositionController capture.
+5. capture the host window as a stand-in `GraphicsCaptureItem`,
+6. import the captured shared texture into wgpu.
 
 On Windows, the probe requests the DX12 backend because the intended WebView2 capture path feeds `NativeFrame::Dx12SharedTexture`.
 
