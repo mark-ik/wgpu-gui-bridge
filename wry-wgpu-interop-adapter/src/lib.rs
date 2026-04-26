@@ -10,6 +10,15 @@ use wgpu_native_texture_interop::{
 #[cfg(target_os = "windows")]
 pub mod windows_capture;
 
+#[cfg(target_os = "windows")]
+pub mod webview2_composition_producer;
+
+#[cfg(target_os = "macos")]
+pub mod wkwebview_producer;
+
+#[cfg(target_os = "linux")]
+pub mod webkitgtk_producer;
+
 /// How a system webview can participate in a host compositor.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -181,6 +190,13 @@ pub enum WryWebSurfaceError {
 }
 
 /// Producer contract implemented by platform-specific Wry/WebView frame sources.
+///
+/// The trait covers the cross-platform lifecycle (capabilities + navigate +
+/// resize + offset + a blocking acquire). Per-frame fast-path acquisition
+/// and any platform-specific optimization signals (e.g. the Windows
+/// "did the shared destination texture get re-allocated this frame"
+/// flag) are exposed on the concrete platform producer types and not
+/// on the trait, since they have no portable shape.
 pub trait WryWebSurfaceProducer {
     fn capabilities(&self) -> WryWebSurfaceCapabilities;
 
@@ -188,7 +204,49 @@ pub trait WryWebSurfaceProducer {
         self.capabilities().preferred_mode
     }
 
+    /// Blocking acquire — returns the next available frame from the
+    /// underlying capture path, possibly waiting for the WebView to
+    /// produce one.
     fn acquire_frame(&mut self) -> Result<WryWebSurfaceFrame, WryWebSurfaceError>;
+
+    /// Navigate the underlying WebView to inline HTML and block until
+    /// `NavigationCompleted` (or analog) fires, or the timeout elapses.
+    /// Producers that don't yet support navigation return
+    /// [`WryWebSurfaceError::Unsupported`].
+    fn navigate_to_string(
+        &mut self,
+        html: &str,
+        timeout: std::time::Duration,
+    ) -> Result<(), WryWebSurfaceError> {
+        let _ = (html, timeout);
+        Err(WryWebSurfaceError::Unsupported(
+            "WryWebSurfaceProducer::navigate_to_string is not implemented for this platform",
+        ))
+    }
+
+    /// Resize the underlying WebView and capture region.
+    fn resize(
+        &mut self,
+        size: PhysicalSize<u32>,
+    ) -> Result<(), WryWebSurfaceError> {
+        let _ = size;
+        Err(WryWebSurfaceError::Unsupported(
+            "WryWebSurfaceProducer::resize is not implemented for this platform",
+        ))
+    }
+
+    /// Reposition the underlying WebView overlay relative to the parent
+    /// host, in physical pixels.
+    fn set_offset(
+        &mut self,
+        x: f32,
+        y: f32,
+    ) -> Result<(), WryWebSurfaceError> {
+        let _ = (x, y);
+        Err(WryWebSurfaceError::Unsupported(
+            "WryWebSurfaceProducer::set_offset is not implemented for this platform",
+        ))
+    }
 }
 
 /// Conservative overlay-only producer used when no capture backend is available yet.

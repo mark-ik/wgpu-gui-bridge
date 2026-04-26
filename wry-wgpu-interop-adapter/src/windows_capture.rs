@@ -16,9 +16,10 @@ use windows::Win32::{
         },
         Direct3D11::{
             D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-            D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX, D3D11_RESOURCE_MISC_SHARED_NTHANDLE,
-            D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11CreateDevice,
-            ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D,
+            D3D11_QUERY_DESC, D3D11_QUERY_EVENT, D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX,
+            D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC,
+            D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext,
+            ID3D11Texture2D,
         },
         Dxgi::{
             Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC},
@@ -113,7 +114,7 @@ impl D3D11SharedTextureFactory {
             .shared_frame)
     }
 
-    fn create_shared_texture(
+    pub(crate) fn create_shared_texture(
         &self,
         size: PhysicalSize<u32>,
         format: wgpu::TextureFormat,
@@ -176,22 +177,114 @@ impl D3D11SharedTextureFactory {
     ) -> Result<WebView2DxgiSharedHandleFrame, WryWebSurfaceError> {
         let target =
             self.create_shared_texture(capture.size, capture.format, capture.generation)?;
+        self.copy_capture_into_existing_target(&target.texture, capture)?;
+        Ok(target.shared_frame)
+    }
 
-        with_borrowed_d3d11_texture(capture.raw_d3d11_texture, |source| {
+    /// Acquire the destination's keyed mutex, copy the capture source into it,
+    /// wait for the D3D11 GPU work to retire, and release the mutex. The
+    /// destination must have been allocated with
+    /// `D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX` (which is what
+    /// `create_shared_texture` produces).
+    pub(crate) fn copy_capture_into_existing_target(
+        &self,
+        target: &ID3D11Texture2D,
+        capture: WebView2D3D11CaptureFrame,
+    ) -> Result<(), WryWebSurfaceError> {
+        let target_mutex = target
+            .cast::<windows::Win32::Graphics::Dxgi::IDXGIKeyedMutex>()
+            .map_err(|error| {
+                WryWebSurfaceError::Platform(format!(
+                    "destination texture cast to IDXGIKeyedMutex failed: {error}"
+                ))
+            })?;
+        // Bound the keyed-mutex acquire so that if the consumer (or anything
+        // else) is somehow holding key 0, we surface a clean error instead
+        // of wedging the producer thread forever.
+        const ACQUIRE_TIMEOUT_MS: u32 = 500;
+        let acquire_hr = unsafe { target_mutex.AcquireSync(0, ACQUIRE_TIMEOUT_MS) };
+        if let Err(error) = acquire_hr {
+            return Err(WryWebSurfaceError::Platform(format!(
+                "AcquireSync(0, {ACQUIRE_TIMEOUT_MS}ms) on shared dest failed/timed out: {error}"
+            )));
+        }
+
+        let copy_result = with_borrowed_d3d11_texture(capture.raw_d3d11_texture, |source| {
             unsafe {
-                self.context.CopyResource(&target.texture, source);
+                self.context.CopyResource(target, source);
             }
             Ok(())
+        });
+
+        // Wait for the GPU to finish the copy before releasing the keyed mutex
+        // and handing the shared NT handle to the D3D12 consumer.
+        let sync_result = self.flush_and_wait_for_gpu();
+
+        let release_result = unsafe { target_mutex.ReleaseSync(0) }.map_err(|error| {
+            WryWebSurfaceError::Platform(format!("ReleaseSync(0) on shared dest failed: {error}"))
+        });
+
+        copy_result?;
+        sync_result?;
+        release_result?;
+        Ok(())
+    }
+
+    fn flush_and_wait_for_gpu(&self) -> Result<(), WryWebSurfaceError> {
+        let mut query = None;
+        unsafe {
+            self.device
+                .CreateQuery(
+                    &D3D11_QUERY_DESC {
+                        Query: D3D11_QUERY_EVENT,
+                        MiscFlags: 0,
+                    },
+                    Some(&mut query),
+                )
+                .map_err(|error| {
+                    WryWebSurfaceError::Platform(format!(
+                        "CreateQuery(D3D11_QUERY_EVENT) failed: {error}"
+                    ))
+                })?;
+        }
+        let query = query.ok_or_else(|| {
+            WryWebSurfaceError::Platform("CreateQuery returned no query".to_string())
         })?;
 
-        Ok(target.shared_frame)
+        unsafe {
+            self.context.End(&query);
+            self.context.Flush();
+        }
+
+        // Spin until the GPU finishes everything queued up to End().
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let mut data: u32 = 0;
+            let result = unsafe {
+                self.context.GetData(
+                    &query,
+                    Some(&mut data as *mut _ as *mut std::ffi::c_void),
+                    std::mem::size_of::<u32>() as u32,
+                    0,
+                )
+            };
+            if result.is_ok() {
+                return Ok(());
+            }
+            if std::time::Instant::now() > deadline {
+                return Err(WryWebSurfaceError::Platform(
+                    "D3D11 GPU sync (event query) timed out after 2s".to_string(),
+                ));
+            }
+            std::thread::yield_now();
+        }
     }
 }
 
 #[derive(Debug)]
-struct D3D11SharedTexture {
-    texture: ID3D11Texture2D,
-    shared_frame: WebView2DxgiSharedHandleFrame,
+pub(crate) struct D3D11SharedTexture {
+    pub(crate) texture: ID3D11Texture2D,
+    pub(crate) shared_frame: WebView2DxgiSharedHandleFrame,
 }
 
 /// Result of probing the Windows.Graphics.Capture side of the pipeline.
@@ -283,6 +376,24 @@ pub unsafe fn capture_visual_frame_once(
     visual: *mut std::ffi::c_void,
     timeout: std::time::Duration,
 ) -> Result<CapturedWindowFrame, WryWebSurfaceError> {
+    unsafe { capture_visual_frame_once_after_start(visual, timeout, || Ok(())) }
+}
+
+/// Capture one frame from a Windows.UI.Composition visual after running a hook
+/// immediately after `GraphicsCaptureSession::StartCapture`.
+///
+/// This is a diagnostic helper for visual hosts that may need to invalidate or
+/// repaint content after the capture session starts before a frame is emitted.
+///
+/// # Safety
+///
+/// `visual` must be a valid live `Windows.UI.Composition.Visual *` for the
+/// duration of the call.
+pub unsafe fn capture_visual_frame_once_after_start(
+    visual: *mut std::ffi::c_void,
+    timeout: std::time::Duration,
+    after_start: impl FnOnce() -> Result<(), WryWebSurfaceError>,
+) -> Result<CapturedWindowFrame, WryWebSurfaceError> {
     if visual.is_null() {
         return Err(WryWebSurfaceError::Platform(
             "composition visual pointer was null".to_string(),
@@ -295,13 +406,58 @@ pub unsafe fn capture_visual_frame_once(
                 "GraphicsCaptureItem::CreateFromVisual failed: {error}"
             ))
         })?;
-        capture_graphics_item_frame_once(&item, timeout)
+        capture_graphics_item_frame_once_after_start(&item, timeout, after_start)
+    })
+}
+
+/// Return the Windows.Graphics.Capture item size for a composition visual.
+///
+/// This diagnostic mirrors the first steps of `capture_visual_frame_once` so a
+/// host can distinguish visual-to-item failures from frame-pool starvation.
+///
+/// # Safety
+///
+/// `visual` must be a valid live `Windows.UI.Composition.Visual *` for the
+/// duration of the call.
+pub unsafe fn capture_visual_item_size(
+    visual: *mut std::ffi::c_void,
+) -> Result<PhysicalSize<u32>, WryWebSurfaceError> {
+    if visual.is_null() {
+        return Err(WryWebSurfaceError::Platform(
+            "composition visual pointer was null".to_string(),
+        ));
+    }
+
+    with_borrowed_composition_visual(visual, |visual| {
+        let item = GraphicsCaptureItem::CreateFromVisual(visual).map_err(|error| {
+            WryWebSurfaceError::Platform(format!(
+                "GraphicsCaptureItem::CreateFromVisual failed: {error}"
+            ))
+        })?;
+        let item_size = item.Size().map_err(|error| {
+            WryWebSurfaceError::Platform(format!("GraphicsCaptureItem::Size failed: {error}"))
+        })?;
+        if item_size.Width <= 0 || item_size.Height <= 0 {
+            return Err(WryWebSurfaceError::Platform(format!(
+                "GraphicsCaptureItem returned invalid size {}x{}",
+                item_size.Width, item_size.Height
+            )));
+        }
+        Ok(PhysicalSize::new(item_size.Width as u32, item_size.Height as u32))
     })
 }
 
 pub fn capture_graphics_item_frame_once(
     item: &GraphicsCaptureItem,
     timeout: std::time::Duration,
+) -> Result<CapturedWindowFrame, WryWebSurfaceError> {
+    capture_graphics_item_frame_once_after_start(item, timeout, || Ok(()))
+}
+
+fn capture_graphics_item_frame_once_after_start(
+    item: &GraphicsCaptureItem,
+    timeout: std::time::Duration,
+    after_start: impl FnOnce() -> Result<(), WryWebSurfaceError>,
 ) -> Result<CapturedWindowFrame, WryWebSurfaceError> {
     let session_supported = GraphicsCaptureSession::IsSupported().map_err(|error| {
         WryWebSurfaceError::Platform(format!(
@@ -345,20 +501,21 @@ pub fn capture_graphics_item_frame_once(
     session
         .StartCapture()
         .map_err(|error| WryWebSurfaceError::Platform(format!("StartCapture failed: {error}")))?;
+    after_start()?;
 
     let deadline = std::time::Instant::now() + timeout;
     let frame = loop {
         match pool.TryGetNextFrame() {
             Ok(frame) => break frame,
-            Err(last_error) if std::time::Instant::now() < deadline => {
-                let _ = last_error;
+            Err(_) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(std::time::Duration::from_millis(16));
             }
             Err(error) => {
                 let _ = session.Close();
                 let _ = pool.Close();
                 return Err(WryWebSurfaceError::Platform(format!(
-                    "TryGetNextFrame failed before timeout: {error}"
+                    "TryGetNextFrame timed out after {timeout:?} for capture item {}x{}; last poll returned {error}",
+                    item_size.Width, item_size.Height
                 )));
             }
         }

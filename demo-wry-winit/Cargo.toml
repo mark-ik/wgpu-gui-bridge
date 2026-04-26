@@ -8,7 +8,27 @@ description = "Minimal winit + wgpu host probe for wry-wgpu-interop-adapter"
 [dependencies]
 pollster = "0.4.0"
 raw-window-handle = "0.6"
+webview2-com = "0.38.2"
 wgpu = { version = "29.0.1", features = ["metal"] }
 wgpu-native-texture-interop = { path = "../wgpu-native-texture-interop", default-features = false }
 winit = "0.30.12"
+windows-numerics = "0.2.0"
+wry = "0.55.0"
 wry-wgpu-interop-adapter = { path = "../wry-wgpu-interop-adapter" }
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.61.3"
+features = [
+	"Foundation",
+	"System",
+	"UI",
+	"UI_Composition",
+	"UI_Composition_Core",
+	"UI_Composition_Desktop",
+	"Win32_Foundation",
+	"Win32_System_Com_StructuredStorage",
+	"Win32_System_Memory",
+	"Win32_System_WinRT",
+	"Win32_System_WinRT_Composition",
+	"Win32_UI_WindowsAndMessaging",
+]

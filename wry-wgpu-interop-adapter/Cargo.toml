@@ -13,8 +13,57 @@ thiserror = "2.0.17"
 wgpu = { version = "29.0.1", features = ["metal"] }
 wgpu-native-texture-interop = { path = "../wgpu-native-texture-interop" }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# WebKitGTK Rust bindings (Tauri-maintained line, links against
+# libwebkitgtk-4.1).
+#
+# System packages required at build time (one-time apt install):
+#   sudo apt install -y libwebkit2gtk-4.1-dev libgtk-3-dev
+# Plus pkg-config and build-essential (usually already present).
+#
+# `v2_40` selects the feature gate for the symbols available in
+# libwebkit2gtk-4.1 ≥ 2.40 (Ubuntu 24.04 LTS ships 2.44, so this is
+# the safe baseline). Bump if newer APIs are needed.
+webkit2gtk = { version = "2.0", features = ["v2_40"] }
+gtk = "0.18"
+gdk = "0.18"
+glib = "0.18"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Versions tracked alongside `wgpu-native-texture-interop`'s objc2 deps
+# so the workspace resolves a single objc2 0.6.x line. Default features
+# are kept on all of these — feature lists can be slimmed once the
+# implementation is in and we know which symbols we're actually
+# pulling. ScreenCaptureKit + WebKit + AppKit + IOSurface + Metal-from-
+# IOSurface are all available with default features at these versions.
+objc2 = "0.6.3"
+objc2-foundation = "0.3.2"
+objc2-app-kit = "0.3.2"
+objc2-web-kit = "0.3.2"
+objc2-screen-capture-kit = "0.3.2"
+objc2-core-foundation = "0.3.2"
+objc2-core-media = "0.3.2"
+objc2-core-video = "0.3.2"
+objc2-io-surface = "0.3.2"
+objc2-metal = { version = "0.3.2", features = [
+    "MTLDevice",
+    "MTLResource",
+    "MTLTexture",
+    "objc2-io-surface",
+] }
+block2 = "0.6.2"
+dispatch2 = "0.3.0"
+
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.62", features = [
+webview2-com = "0.38.2"
+windows-numerics = "0.2.0"
+windows = { version = "0.61.3", features = [
+    "Foundation",
+    "System",
+    "UI",
+    "UI_Composition",
+    "UI_Composition_Core",
+    "UI_Composition_Desktop",
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Direct3D11",
@@ -22,10 +71,14 @@ windows = { version = "0.62", features = [
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Security",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Memory",
+    "Win32_System_WinRT",
+    "Win32_System_WinRT_Composition",
     "Win32_System_WinRT_Direct3D11",
     "Win32_System_WinRT_Graphics_Capture",
+    "Win32_UI_WindowsAndMessaging",
     "Graphics_Capture",
     "Graphics_DirectX",
     "Graphics_DirectX_Direct3D11",
-    "UI_Composition",
 ] }
